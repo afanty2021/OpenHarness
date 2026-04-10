@@ -15,6 +15,7 @@ from openharness.engine.messages import ConversationMessage, TextBlock
 from openharness.engine.query_engine import QueryEngine
 from openharness.mcp.types import McpHttpServerConfig, McpStdioServerConfig
 from openharness.permissions import PermissionChecker
+from openharness.plugins.types import PluginCommandDefinition
 from openharness.state import AppState, AppStateStore
 from openharness.tasks import get_task_manager
 from openharness.tools import create_default_tool_registry
@@ -78,13 +79,176 @@ async def test_permissions_command_persists(tmp_path: Path, monkeypatch):
 async def test_model_command_persists(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     registry = create_default_command_registry()
-    command, args = registry.lookup("/model set claude-opus-test")
+    command, args = registry.lookup("/model opus")
     assert command is not None
 
     result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
 
-    assert "claude-opus-test" in result.message
-    assert load_settings().model == "claude-opus-test"
+    assert "opus" in result.message
+    assert load_settings().resolve_profile()[1].last_model == "opus"
+    assert load_settings().model == "claude-opus-4-6"
+
+
+@pytest.mark.asyncio
+async def test_model_command_accepts_direct_value(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/model gpt-5.4")
+    assert command is not None
+
+    result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
+
+    assert "gpt-5.4" in result.message
+    assert load_settings().model == "gpt-5.4"
+
+
+@pytest.mark.asyncio
+async def test_model_command_default_clears_profile_override(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    save_settings(
+        Settings().model_copy(
+            update={
+                "active_profile": "claude-api",
+                "profiles": {
+                    "claude-api": {
+                        "label": "Claude API",
+                        "provider": "anthropic",
+                        "api_format": "anthropic",
+                        "auth_source": "anthropic_api_key",
+                        "default_model": "sonnet",
+                        "last_model": "opus",
+                    }
+                },
+            }
+        )
+    )
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/model default")
+    assert command is not None
+
+    result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
+
+    assert "reset to default" in result.message
+    assert load_settings().resolve_profile()[1].last_model == ""
+    assert load_settings().model == "claude-sonnet-4-6"
+
+
+@pytest.mark.asyncio
+async def test_turns_show_reports_unlimited_engine_when_session_is_unbounded(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+    context.engine.set_max_turns(None)
+
+    command, args = registry.lookup("/turns show")
+    assert command is not None
+
+    result = await command.handler(args, context)
+
+    assert "Max turns (engine): unlimited" in result.message
+
+
+@pytest.mark.asyncio
+async def test_turns_command_accepts_unlimited(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+
+    command, args = registry.lookup("/turns unlimited")
+    assert command is not None
+
+    result = await command.handler(args, context)
+
+    assert "unlimited for this session" in result.message
+    assert context.engine.max_turns is None
+
+
+@pytest.mark.asyncio
+async def test_provider_command_switches_profile_and_requests_runtime_refresh(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    save_settings(
+        Settings().model_copy(
+            update={
+                "profiles": {
+                    "kimi-anthropic": {
+                        "label": "Kimi Anthropic",
+                        "provider": "anthropic",
+                        "api_format": "anthropic",
+                        "auth_source": "anthropic_api_key",
+                        "default_model": "kimi-k2.5",
+                        "last_model": "kimi-k2.5",
+                        "base_url": "https://api.moonshot.cn/anthropic",
+                        "allowed_models": ["kimi-k2.5"],
+                    }
+                }
+            }
+        )
+    )
+    registry = create_default_command_registry()
+    context = _make_context(tmp_path)
+
+    command, args = registry.lookup("/provider kimi-anthropic")
+    assert command is not None
+
+    result = await command.handler(args, context)
+
+    loaded = load_settings()
+    assert result.refresh_runtime is True
+    assert loaded.active_profile == "kimi-anthropic"
+    assert loaded.base_url == "https://api.moonshot.cn/anthropic"
+    assert loaded.model == "kimi-k2.5"
+
+
+@pytest.mark.asyncio
+async def test_plugin_command_registers_and_submits_prompt(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    registry = create_default_command_registry(
+        plugin_commands=[
+            PluginCommandDefinition(
+                name="fixture:ops:restart",
+                description="Restart services safely",
+                content="Base workflow\n\n$ARGUMENTS",
+                user_invocable=True,
+            )
+        ]
+    )
+    command, args = registry.lookup("/fixture:ops:restart api")
+    assert command is not None
+
+    result = await command.handler(args, _make_context(tmp_path))
+
+    assert result.submit_prompt == "Base workflow\n\napi"
+
+
+@pytest.mark.asyncio
+async def test_model_command_rejects_values_outside_profile_allowlist(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
+    save_settings(
+        Settings().model_copy(
+            update={
+                "active_profile": "kimi-anthropic",
+                "profiles": {
+                    "kimi-anthropic": {
+                        "label": "Kimi Anthropic",
+                        "provider": "anthropic",
+                        "api_format": "anthropic",
+                        "auth_source": "anthropic_api_key",
+                        "default_model": "kimi-k2.5",
+                        "last_model": "kimi-k2.5",
+                        "base_url": "https://api.moonshot.cn/anthropic",
+                        "allowed_models": ["kimi-k2.5"],
+                    }
+                },
+            }
+        )
+    )
+    registry = create_default_command_registry()
+    command, args = registry.lookup("/model claude-opus-4-6")
+    assert command is not None
+
+    result = await command.handler(args, CommandContext(engine=_make_engine(tmp_path), cwd=str(tmp_path)))
+
+    assert "is not allowed for profile 'kimi-anthropic'" in result.message
 
 
 @pytest.mark.asyncio

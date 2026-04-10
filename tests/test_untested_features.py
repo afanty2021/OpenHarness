@@ -21,6 +21,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from openharness.config.settings import Settings
+
 API_KEY = os.environ.get(
     "ANTHROPIC_API_KEY",
     "sk-Ue1kdhq9prvNwuwySlzRtWVD7ek0iJJaHyPdKDa3ecKLwYuG",
@@ -29,6 +31,7 @@ BASE_URL = os.environ.get("ANTHROPIC_BASE_URL", "https://api.moonshot.cn/anthrop
 MODEL = os.environ.get("ANTHROPIC_MODEL", "kimi-k2.5")
 WORKSPACE = Path("/home/tangjiabin/AutoAgent")
 _SKIP_REAL_API = not WORKSPACE.exists() or not API_KEY
+DEFAULT_MAX_TURNS = Settings().max_turns
 
 RESULTS: dict[str, bool] = {}
 
@@ -211,7 +214,7 @@ async def test_hooks_in_agent_loop():
 
     ctx = QueryContext(
         api_client=api, tool_registry=reg, permission_checker=checker,
-        cwd=WORKSPACE, model=MODEL, max_tokens=1024, max_turns=4,
+        cwd=WORKSPACE, model=MODEL, max_tokens=1024, max_turns=DEFAULT_MAX_TURNS,
         system_prompt="You are a helpful assistant. Use bash to execute commands.",
         hook_executor=hook_executor,
     )
@@ -243,13 +246,17 @@ async def test_skills_load():
 
     with tempfile.TemporaryDirectory() as tmpdir:
         # Create skill files
-        (Path(tmpdir) / "commit.md").write_text("""---
+        commit_dir = Path(tmpdir) / "commit"
+        commit_dir.mkdir()
+        (commit_dir / "SKILL.md").write_text("""---
 name: commit
 description: Create a git commit with a good message
 ---
 Read the git diff, then create a commit with a descriptive message.
 """)
-        (Path(tmpdir) / "review-pr.md").write_text("""---
+        review_dir = Path(tmpdir) / "review-pr"
+        review_dir.mkdir()
+        (review_dir / "SKILL.md").write_text("""---
 name: review-pr
 description: Review a pull request for issues
 ---
@@ -308,7 +315,9 @@ async def test_plugins_load():
         # skills
         skills_dir = plugin_dir / "skills"
         skills_dir.mkdir()
-        (skills_dir / "deploy.md").write_text("""---
+        deploy_dir = skills_dir / "deploy"
+        deploy_dir.mkdir()
+        (deploy_dir / "SKILL.md").write_text("""---
 name: deploy
 description: Deploy the application
 ---
@@ -683,7 +692,7 @@ async def test_combined_hooks_skills_agent():
 
     ctx = QueryContext(
         api_client=api, tool_registry=reg, permission_checker=checker,
-        cwd=WORKSPACE, model=MODEL, max_tokens=2048, max_turns=8,
+        cwd=WORKSPACE, model=MODEL, max_tokens=2048, max_turns=DEFAULT_MAX_TURNS,
         system_prompt="You are a code analyst. Be concise. Use tools to answer questions.",
         hook_executor=hook_exec,
     )
@@ -752,7 +761,7 @@ async def test_full_swarm_autoagent():
                 checker = PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO))
                 ctx = QueryContext(
                     api_client=api, tool_registry=reg, permission_checker=checker,
-                    cwd=WORKSPACE, model=MODEL, max_tokens=1024, max_turns=6,
+                    cwd=WORKSPACE, model=MODEL, max_tokens=1024, max_turns=DEFAULT_MAX_TURNS,
                     system_prompt="You are a research worker. Use tools. Be concise.",
                 )
                 config = TeammateSpawnConfig(

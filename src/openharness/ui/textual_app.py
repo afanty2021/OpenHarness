@@ -19,6 +19,9 @@ from openharness.config.settings import load_settings, save_settings
 from openharness.engine.stream_events import (
     AssistantTextDelta,
     AssistantTurnComplete,
+    CompactProgressEvent,
+    ErrorEvent,
+    StatusEvent,
     StreamEvent,
     ToolExecutionCompleted,
     ToolExecutionStarted,
@@ -239,6 +242,7 @@ class OpenHarnessTerminalApp(App[None]):
     async def on_mount(self) -> None:
         self._bundle = await build_runtime(
             prompt=self._config.prompt,
+            cwd=str(self.app.cwd) if getattr(self.app, 'cwd', None) else None,
             model=self._config.model,
             base_url=self._config.base_url,
             system_prompt=self._config.system_prompt,
@@ -314,6 +318,35 @@ class OpenHarnessTerminalApp(App[None]):
             self._set_current_response(f"[bold]assistant>[/bold] {self._assistant_buffer}")
             return
 
+        if isinstance(event, CompactProgressEvent):
+            if event.phase == "hooks_start":
+                if event.trigger == "reactive":
+                    self._set_current_response("[dim]Preparing retry compaction...[/dim]")
+                else:
+                    self._set_current_response("[dim]Preparing conversation compaction...[/dim]")
+            elif event.phase == "compact_start":
+                if event.trigger == "reactive":
+                    self._set_current_response("[dim]Context too large. Compacting and retrying...[/dim]")
+                else:
+                    self._set_current_response("[dim]Compacting conversation memory...[/dim]")
+            elif event.phase == "compact_retry":
+                attempt = f" (attempt {event.attempt})" if event.attempt is not None else ""
+                self._set_current_response(f"[dim]Retrying compaction{attempt}...[/dim]")
+            elif event.phase == "compact_failed":
+                self._append_line(f"system> Compaction failed: {event.message or 'unknown error'}")
+                self._set_current_response("Ready.")
+            elif event.phase == "compact_end":
+                self._set_current_response("[dim]Compaction complete.[/dim]")
+            elif event.phase == "session_memory_start":
+                self._set_current_response("[dim]Condensing earlier conversation...[/dim]")
+            elif event.phase == "session_memory_end":
+                self._set_current_response("[dim]Condensed earlier conversation.[/dim]")
+            elif event.phase == "context_collapse_start":
+                self._set_current_response("[dim]Collapsing oversized context...[/dim]")
+            elif event.phase == "context_collapse_end":
+                self._set_current_response("[dim]Context collapse complete.[/dim]")
+            return
+
         if isinstance(event, AssistantTurnComplete):
             text = self._assistant_buffer or event.message.text or "(empty response)"
             self._append_line(f"assistant> {text}")
@@ -329,6 +362,15 @@ class OpenHarnessTerminalApp(App[None]):
         if isinstance(event, ToolExecutionCompleted):
             prefix = "tool-error>" if event.is_error else "tool-result>"
             self._append_line(f"{prefix} {event.tool_name}: {event.output}")
+            return
+
+        if isinstance(event, ErrorEvent):
+            self._append_line(f"error> {event.message}")
+            self._assistant_buffer = ""
+            self._set_current_response("Ready.")
+            return
+        if isinstance(event, StatusEvent):
+            self._append_line(f"system> {event.message}")
 
     def action_clear_conversation(self) -> None:
         if self._bundle is None:

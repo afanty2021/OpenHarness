@@ -8,11 +8,17 @@ import type {
 	FrontendConfig,
 	McpServerSnapshot,
 	SelectOptionPayload,
+	SwarmNotificationSnapshot,
+	SwarmTeammateSnapshot,
 	TaskSnapshot,
 	TranscriptItem,
 } from '../types.js';
 
 const PROTOCOL_PREFIX = 'OHJSON:';
+const ASSISTANT_DELTA_FLUSH_MS = 33;
+const ASSISTANT_DELTA_FLUSH_CHARS = 256;
+
+const stableStringify = (value: unknown): string => JSON.stringify(value);
 
 export function useBackendSession(config: FrontendConfig, onExit: (code?: number | null) => void) {
 	const [transcript, setTranscript] = useState<TranscriptItem[]>([]);
@@ -23,10 +29,45 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 	const [mcpServers, setMcpServers] = useState<McpServerSnapshot[]>([]);
 	const [bridgeSessions, setBridgeSessions] = useState<BridgeSessionSnapshot[]>([]);
 	const [modal, setModal] = useState<Record<string, unknown> | null>(null);
-	const [selectRequest, setSelectRequest] = useState<{title: string; submitPrefix: string; options: SelectOptionPayload[]} | null>(null);
+	const [selectRequest, setSelectRequest] = useState<{title: string; command: string; options: SelectOptionPayload[]} | null>(null);
 	const [busy, setBusy] = useState(false);
+	const [busyLabel, setBusyLabel] = useState<string | undefined>(undefined);
+	const [ready, setReady] = useState(false);
+	const [todoMarkdown, setTodoMarkdown] = useState('');
+	const [swarmTeammates, setSwarmTeammates] = useState<SwarmTeammateSnapshot[]>([]);
+	const [swarmNotifications, setSwarmNotifications] = useState<SwarmNotificationSnapshot[]>([]);
 	const childRef = useRef<ChildProcessWithoutNullStreams | null>(null);
 	const sentInitialPrompt = useRef(false);
+	const lastStatusSnapshotRef = useRef('');
+	const lastTasksSnapshotRef = useRef('');
+	const lastMcpSnapshotRef = useRef('');
+	const lastBridgeSnapshotRef = useRef('');
+
+	// Streaming deltas can arrive one token at a time; updating Ink state for each
+	// delta causes heavy re-rendering/flicker. Buffer and flush at ~30fps.
+	const assistantBufferRef = useRef('');
+	const pendingAssistantDeltaRef = useRef('');
+	const assistantFlushTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+	const flushAssistantDelta = (): void => {
+		const pending = pendingAssistantDeltaRef.current;
+		if (!pending) {
+			return;
+		}
+		pendingAssistantDeltaRef.current = '';
+		assistantBufferRef.current += pending;
+		setAssistantBuffer(assistantBufferRef.current);
+	};
+
+	const clearAssistantDelta = (): void => {
+		pendingAssistantDeltaRef.current = '';
+		assistantBufferRef.current = '';
+		if (assistantFlushTimerRef.current) {
+			clearTimeout(assistantFlushTimerRef.current);
+			assistantFlushTimerRef.current = null;
+		}
+		setAssistantBuffer('');
+	};
 
 	const sendRequest = (payload: Record<string, unknown>): void => {
 		const child = childRef.current;
@@ -38,9 +79,14 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 
 	useEffect(() => {
 		const [command, ...args] = config.backend_command;
+		const useDetachedGroup = process.platform !== 'win32';
 		const child = spawn(command, args, {
 			stdio: ['pipe', 'pipe', 'inherit'],
 			env: process.env,
+			// On Windows, a detached child gets its own console window and can
+			// flash open/closed. Keep detached groups for POSIX only.
+			detached: useDetachedGroup,
+			windowsHide: true,
 		});
 		childRef.current = child;
 
@@ -60,20 +106,54 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			onExit(code);
 		});
 
+		// Ensure child processes are killed on parent exit (prevents stale processes)
+		const killChild = (): void => {
+			if (!child.killed) {
+				// Kill the whole process group on POSIX. On Windows, terminate the
+				// direct child to avoid relying on negative PIDs.
+				try {
+					if (useDetachedGroup && child.pid) {
+						process.kill(-child.pid, 'SIGTERM');
+					} else {
+						child.kill('SIGTERM');
+					}
+				} catch {
+					child.kill('SIGTERM');
+				}
+			}
+			if (assistantFlushTimerRef.current) {
+				clearTimeout(assistantFlushTimerRef.current);
+				assistantFlushTimerRef.current = null;
+			}
+		};
+		process.on('exit', killChild);
+		process.on('SIGINT', killChild);
+		process.on('SIGTERM', killChild);
+
 		return () => {
 			reader.close();
-			if (!child.killed) {
-				child.kill();
-			}
+			killChild();
+			process.removeListener('exit', killChild);
+			process.removeListener('SIGINT', killChild);
+			process.removeListener('SIGTERM', killChild);
 		};
 	}, []);
 
 	const handleEvent = (event: BackendEvent): void => {
 		if (event.type === 'ready') {
+			setReady(true);
+			const statusSnapshot = stableStringify(event.state ?? {});
+			lastStatusSnapshotRef.current = statusSnapshot;
 			setStatus(event.state ?? {});
+			const tasksSnapshot = stableStringify(event.tasks ?? []);
+			lastTasksSnapshotRef.current = tasksSnapshot;
 			setTasks(event.tasks ?? []);
 			setCommands(event.commands ?? []);
+			const mcpSnapshot = stableStringify(event.mcp_servers ?? []);
+			lastMcpSnapshotRef.current = mcpSnapshot;
 			setMcpServers(event.mcp_servers ?? []);
+			const bridgeSnapshot = stableStringify(event.bridge_sessions ?? []);
+			lastBridgeSnapshotRef.current = bridgeSnapshot;
 			setBridgeSessions(event.bridge_sessions ?? []);
 			if (config.initial_prompt && !sentInitialPrompt.current) {
 				sentInitialPrompt.current = true;
@@ -83,35 +163,123 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			return;
 		}
 		if (event.type === 'state_snapshot') {
-			setStatus(event.state ?? {});
-			setMcpServers(event.mcp_servers ?? []);
-			setBridgeSessions(event.bridge_sessions ?? []);
+			const statusSnapshot = stableStringify(event.state ?? {});
+			if (statusSnapshot !== lastStatusSnapshotRef.current) {
+				lastStatusSnapshotRef.current = statusSnapshot;
+				setStatus(event.state ?? {});
+			}
+			const mcpSnapshot = stableStringify(event.mcp_servers ?? []);
+			if (mcpSnapshot !== lastMcpSnapshotRef.current) {
+				lastMcpSnapshotRef.current = mcpSnapshot;
+				setMcpServers(event.mcp_servers ?? []);
+			}
+			const bridgeSnapshot = stableStringify(event.bridge_sessions ?? []);
+			if (bridgeSnapshot !== lastBridgeSnapshotRef.current) {
+				lastBridgeSnapshotRef.current = bridgeSnapshot;
+				setBridgeSessions(event.bridge_sessions ?? []);
+			}
 			return;
 		}
 		if (event.type === 'tasks_snapshot') {
-			setTasks(event.tasks ?? []);
+			const tasksSnapshot = stableStringify(event.tasks ?? []);
+			if (tasksSnapshot !== lastTasksSnapshotRef.current) {
+				lastTasksSnapshotRef.current = tasksSnapshot;
+				setTasks(event.tasks ?? []);
+			}
 			return;
 		}
 		if (event.type === 'transcript_item' && event.item) {
 			setTranscript((items) => [...items, event.item as TranscriptItem]);
 			return;
 		}
+		if (event.type === 'status') {
+			const message = event.message?.trim();
+			if (!message) {
+				return;
+			}
+			setTranscript((items) => [...items, {role: 'status', text: message}]);
+			if (busy) {
+				setBusyLabel(message);
+			}
+			return;
+		}
+		if (event.type === 'compact_progress') {
+			const phase = String(event.compact_phase ?? '');
+			const trigger = String(event.compact_trigger ?? '');
+			const attempt = event.attempt != null ? Number(event.attempt) : undefined;
+			if (phase === 'hooks_start') {
+				setBusyLabel(
+					trigger === 'reactive'
+						? 'Preparing retry compaction…'
+						: 'Preparing conversation compaction…',
+				);
+			} else if (phase === 'context_collapse_start') {
+				setBusyLabel('Collapsing oversized context…');
+			} else if (phase === 'context_collapse_end') {
+				setBusyLabel('Context collapse complete…');
+			} else if (phase === 'session_memory_start') {
+				setBusyLabel('Condensing earlier conversation…');
+			} else if (phase === 'compact_start') {
+				setBusyLabel(
+					trigger === 'reactive'
+						? 'Context is too large. Compacting and retrying…'
+						: 'Compacting conversation memory…',
+				);
+			} else if (phase === 'compact_retry') {
+				setBusyLabel(attempt ? `Retrying compaction (${attempt})…` : 'Retrying compaction…');
+			} else if (phase === 'compact_end') {
+				setBusyLabel('Compaction complete. Continuing…');
+			} else if (phase === 'compact_failed') {
+				setBusyLabel('Compaction failed. Continuing without it…');
+			}
+			if (event.message) {
+				setTranscript((items) => [...items, {role: 'status', text: event.message!}]);
+			}
+			return;
+		}
 		if (event.type === 'assistant_delta') {
-			setAssistantBuffer((value) => value + (event.message ?? ''));
+			const delta = event.message ?? '';
+			if (!delta) {
+				return;
+			}
+			pendingAssistantDeltaRef.current += delta;
+			if (pendingAssistantDeltaRef.current.length >= ASSISTANT_DELTA_FLUSH_CHARS) {
+				flushAssistantDelta();
+				return;
+			}
+			if (!assistantFlushTimerRef.current) {
+				assistantFlushTimerRef.current = setTimeout(() => {
+					assistantFlushTimerRef.current = null;
+					flushAssistantDelta();
+				}, ASSISTANT_DELTA_FLUSH_MS);
+			}
 			return;
 		}
 		if (event.type === 'assistant_complete') {
-			const text = event.message ?? assistantBuffer;
+			if (assistantFlushTimerRef.current) {
+				clearTimeout(assistantFlushTimerRef.current);
+				assistantFlushTimerRef.current = null;
+			}
+			flushAssistantDelta();
+			const text = event.message ?? assistantBufferRef.current;
 			setTranscript((items) => [...items, {role: 'assistant', text}]);
-			setAssistantBuffer('');
+			clearAssistantDelta();
 			setBusy(false);
+			setBusyLabel(undefined);
 			return;
 		}
 		if (event.type === 'line_complete') {
+			// If the line ended without an assistant_complete (e.g. errors), make sure we
+			// don't leave stale streaming text on screen.
+			clearAssistantDelta();
 			setBusy(false);
+			setBusyLabel(undefined);
 			return;
 		}
 		if ((event.type === 'tool_started' || event.type === 'tool_completed') && event.item) {
+			if (event.type === 'tool_started') {
+				setBusyLabel(event.tool_name ? `Running ${event.tool_name}...` : 'Running...');
+			}
 			const enrichedItem: TranscriptItem = {
 				...event.item,
 				tool_name: event.item.tool_name ?? event.tool_name ?? undefined,
@@ -123,14 +291,15 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		}
 		if (event.type === 'clear_transcript') {
 			setTranscript([]);
-			setAssistantBuffer('');
+			clearAssistantDelta();
+			setBusyLabel(undefined);
 			return;
 		}
 		if (event.type === 'select_request') {
 			const m = event.modal ?? {};
 			setSelectRequest({
 				title: String(m.title ?? 'Select'),
-				submitPrefix: String(m.submit_prefix ?? ''),
+				command: String(m.command ?? ''),
 				options: event.select_options ?? [],
 			});
 			return;
@@ -141,7 +310,30 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 		}
 		if (event.type === 'error') {
 			setTranscript((items) => [...items, {role: 'system', text: `error: ${event.message ?? 'unknown error'}`}]);
+			clearAssistantDelta();
 			setBusy(false);
+			setBusyLabel(undefined);
+			return;
+		}
+		if (event.type === 'todo_update') {
+			if (event.todo_markdown != null) {
+				setTodoMarkdown(event.todo_markdown);
+			}
+			return;
+		}
+		if (event.type === 'swarm_status') {
+			if (event.swarm_teammates != null) {
+				setSwarmTeammates(event.swarm_teammates);
+			}
+			if (event.swarm_notifications != null) {
+				setSwarmNotifications((prev) => [...prev, ...event.swarm_notifications!].slice(-20));
+			}
+			return;
+		}
+		if (event.type === 'plan_mode_change') {
+			if (event.plan_mode != null) {
+				setStatus((s) => ({...s, permission_mode: event.plan_mode}));
+			}
 			return;
 		}
 		if (event.type === 'shutdown') {
@@ -161,11 +353,16 @@ export function useBackendSession(config: FrontendConfig, onExit: (code?: number
 			modal,
 			selectRequest,
 			busy,
+			busyLabel,
+			ready,
+			todoMarkdown,
+			swarmTeammates,
+			swarmNotifications,
 			setModal,
 			setSelectRequest,
 			setBusy,
 			sendRequest,
 		}),
-		[assistantBuffer, bridgeSessions, busy, commands, mcpServers, modal, selectRequest, status, tasks, transcript]
+		[assistantBuffer, bridgeSessions, busy, busyLabel, commands, mcpServers, modal, ready, selectRequest, status, swarmNotifications, swarmTeammates, tasks, todoMarkdown, transcript]
 	);
 }

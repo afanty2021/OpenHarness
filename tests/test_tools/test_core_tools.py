@@ -71,6 +71,12 @@ async def test_glob_and_grep(tmp_path: Path):
     )
     assert "b.py:1:def beta():" in grep_result.output
 
+    file_root_result = await GrepTool().execute(
+        GrepToolInput(pattern=r"def\s+alpha", root="a.py"),
+        context,
+    )
+    assert "a.py:1:def alpha():" in file_root_result.output
+
 
 @pytest.mark.asyncio
 async def test_bash_tool_runs_command(tmp_path: Path):
@@ -105,7 +111,9 @@ async def test_skill_todo_and_config_tools(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("OPENHARNESS_CONFIG_DIR", str(tmp_path / "config"))
     skills_dir = tmp_path / "config" / "skills"
     skills_dir.mkdir(parents=True)
-    (skills_dir / "pytest.md").write_text("# Pytest\nHelpful pytest notes.\n", encoding="utf-8")
+    pytest_dir = skills_dir / "pytest"
+    pytest_dir.mkdir()
+    (pytest_dir / "SKILL.md").write_text("# Pytest\nHelpful pytest notes.\n", encoding="utf-8")
 
     skill_result = await SkillTool().execute(
         SkillToolInput(name="Pytest"),

@@ -20,10 +20,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from openharness.config.settings import Settings
+
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "sk-Ue1kdhq9prvNwuwySlzRtWVD7ek0iJJaHyPdKDa3ecKLwYuG")
 BASE_URL = os.environ.get("ANTHROPIC_BASE_URL", "https://api.moonshot.cn/anthropic")
 MODEL = os.environ.get("ANTHROPIC_MODEL", "kimi-k2.5")
 WORKSPACE = Path("/home/tangjiabin/AutoAgent")
+DEFAULT_MAX_TURNS = Settings().max_turns
 
 RESULTS: dict[str, tuple[bool, float]] = {}
 
@@ -160,7 +163,9 @@ async def task_model_invokes_skill_tool():
         # Create a skill file that gives specific instructions
         skills_dir = Path(tmpdir) / "skills"
         skills_dir.mkdir()
-        (skills_dir / "code-review.md").write_text("""---
+        code_review_dir = skills_dir / "code-review"
+        code_review_dir.mkdir()
+        (code_review_dir / "SKILL.md").write_text("""---
 name: code-review
 description: Step-by-step code review checklist
 ---
@@ -258,8 +263,9 @@ async def task_plugin_skill_in_agent_loop():
             "skills_dir": "skills",
         }))
         plugin_skills = plugin_dir / "skills"
-        plugin_skills.mkdir()
-        (plugin_skills / "scan-secrets.md").write_text("""---
+        scan_secrets_dir = plugin_skills / "scan-secrets"
+        scan_secrets_dir.mkdir(parents=True)
+        (scan_secrets_dir / "SKILL.md").write_text("""---
 name: scan-secrets
 description: Scan for hardcoded secrets and credentials
 ---
@@ -360,7 +366,9 @@ async def task_hook_gates_writes_skill_guides():
         # Create skill
         skills_dir = Path(tmpdir) / "skills"
         skills_dir.mkdir()
-        (skills_dir / "refactor-guide.md").write_text("""---
+        refactor_dir = skills_dir / "refactor-guide"
+        refactor_dir.mkdir()
+        (refactor_dir / "SKILL.md").write_text("""---
 name: refactor-guide
 description: Guide for safe refactoring
 ---
@@ -507,13 +515,17 @@ async def task_swarm_teammates_use_skills():
         skills_dir = Path(tmpdir) / "skills"
         skills_dir.mkdir()
 
-        (skills_dir / "count-classes.md").write_text("""---
+        count_classes_dir = skills_dir / "count-classes"
+        count_classes_dir.mkdir()
+        (count_classes_dir / "SKILL.md").write_text("""---
 name: count-classes
 description: Count classes in Python files
 ---
 Use grep to search for 'class ' definitions. Count them. Write result to /tmp/class_count.txt.
 """)
-        (skills_dir / "find-imports.md").write_text("""---
+        find_imports_dir = skills_dir / "find-imports"
+        find_imports_dir.mkdir()
+        (find_imports_dir / "SKILL.md").write_text("""---
 name: find-imports
 description: Find all import statements
 ---
@@ -532,7 +544,7 @@ Use grep to search for '^import ' and '^from .* import'. Count unique packages. 
             ctx = QueryContext(
                 api_client=api, tool_registry=reg,
                 permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
-                cwd=WORKSPACE, model=MODEL, max_tokens=1024, max_turns=20,
+                cwd=WORKSPACE, model=MODEL, max_tokens=1024, max_turns=DEFAULT_MAX_TURNS,
                 system_prompt="You are a worker. First invoke the skill tool to get instructions, then follow them.",
             )
             config = TeammateSpawnConfig(

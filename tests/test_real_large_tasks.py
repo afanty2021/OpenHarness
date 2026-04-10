@@ -19,10 +19,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
+from openharness.config.settings import Settings
+
 API_KEY = os.environ.get("ANTHROPIC_API_KEY", "sk-Ue1kdhq9prvNwuwySlzRtWVD7ek0iJJaHyPdKDa3ecKLwYuG")
 BASE_URL = os.environ.get("ANTHROPIC_BASE_URL", "https://api.moonshot.cn/anthropic")
 MODEL = os.environ.get("ANTHROPIC_MODEL", "kimi-k2.5")
 WORKSPACE = Path("/home/tangjiabin/AutoAgent")
+DEFAULT_MAX_TURNS = Settings().max_turns
 
 RESULTS: dict[str, tuple[bool, float]] = {}
 
@@ -31,7 +34,7 @@ RESULTS: dict[str, tuple[bool, float]] = {}
 # Shared infrastructure
 # ====================================================================
 
-def make_engine(system_prompt, cwd=None, hook_executor=None, max_tokens=4096):
+def make_engine(system_prompt, cwd=None, hook_executor=None, max_tokens=4096, max_turns=DEFAULT_MAX_TURNS):
     from openharness.api.client import AnthropicApiClient
     from openharness.config.settings import PermissionSettings
     from openharness.engine.query_engine import QueryEngine
@@ -55,7 +58,7 @@ def make_engine(system_prompt, cwd=None, hook_executor=None, max_tokens=4096):
     return QueryEngine(
         api_client=api, tool_registry=reg, permission_checker=checker,
         cwd=Path(cwd or WORKSPACE), model=MODEL, system_prompt=system_prompt,
-        max_tokens=max_tokens, hook_executor=hook_executor,
+        max_tokens=max_tokens, max_turns=max_turns, hook_executor=hook_executor,
     )
 
 
@@ -216,7 +219,7 @@ async def task_coordinator_code_review():
 
                 ctx = QueryContext(
                     api_client=api, tool_registry=reg, permission_checker=checker,
-                    cwd=WORKSPACE, model=MODEL, max_tokens=2048, max_turns=8,
+                    cwd=WORKSPACE, model=MODEL, max_tokens=2048, max_turns=DEFAULT_MAX_TURNS,
                     system_prompt=sys_prompt,
                 )
                 config = TeammateSpawnConfig(
@@ -557,7 +560,7 @@ async def task_full_pipeline():
                 ctx = QueryContext(
                     api_client=api, tool_registry=reg,
                     permission_checker=PermissionChecker(PermissionSettings(mode=PermissionMode.FULL_AUTO)),
-                    cwd=WORKSPACE, model=MODEL, max_tokens=1024, max_turns=6,
+                    cwd=WORKSPACE, model=MODEL, max_tokens=1024, max_turns=DEFAULT_MAX_TURNS,
                     system_prompt="You are a research worker. Investigate and report findings. Be concise.",
                 )
                 config = TeammateSpawnConfig(
