@@ -16,9 +16,13 @@ from openharness.api.provider import auth_status, detect_provider
 from openharness.bridge import get_bridge_manager
 from openharness.commands import CommandContext, CommandResult, create_default_command_registry
 from openharness.config import get_config_file_path, load_settings
-from openharness.config.settings import display_model_setting
 from openharness.engine import QueryEngine
-from openharness.engine.messages import ConversationMessage, ToolResultBlock, ToolUseBlock
+from openharness.engine.messages import (
+    ConversationMessage,
+    ToolResultBlock,
+    ToolUseBlock,
+    sanitize_conversation_messages,
+)
 from openharness.engine.query import MaxTurnsExceeded
 from openharness.engine.stream_events import StreamEvent
 from openharness.hooks import HookEvent, HookExecutionContext, HookExecutor, load_hook_registry
@@ -152,6 +156,7 @@ def _resolve_api_client_from_settings(settings) -> SupportsStreamingMessages:
         return OpenAICompatibleClient(
             api_key=auth.value,
             base_url=settings.base_url,
+            timeout=settings.timeout,
         )
     auth = _safe_resolve_auth()
     return AnthropicApiClient(
@@ -206,11 +211,12 @@ async def build_runtime(
     await mcp_manager.connect_all()
     tool_registry = create_default_tool_registry(mcp_manager)
     provider = detect_provider(settings)
-    _, active_profile = settings.resolve_profile()
     bridge_manager = get_bridge_manager()
     app_state = AppStateStore(
         AppState(
-            model=display_model_setting(active_profile),
+            # Show the effective runtime model (after CLI/env/profile merges),
+            # not profile.last_model which may be stale.
+            model=settings.model,
             permission_mode=settings.permission.mode.value,
             theme=settings.theme,
             cwd=cwd,
@@ -280,6 +286,11 @@ async def build_runtime(
         model=settings.model,
         system_prompt=system_prompt_text,
         max_tokens=settings.max_tokens,
+        context_window_tokens=settings.context_window_tokens or settings.memory.context_window_tokens,
+        auto_compact_threshold_tokens=(
+            settings.auto_compact_threshold_tokens
+            or settings.memory.auto_compact_threshold_tokens
+        ),
         max_turns=engine_max_turns,
         permission_prompt=permission_prompt,
         ask_user_prompt=ask_user_prompt,
@@ -295,10 +306,16 @@ async def build_runtime(
     )
     # Restore messages from a saved session if provided
     if restore_messages:
-        restored = [
-            ConversationMessage.model_validate(m) for m in restore_messages
-        ]
+        restored = sanitize_conversation_messages(
+            [ConversationMessage.model_validate(m) for m in restore_messages]
+        )
         engine.load_messages(restored)
+
+    # Start Docker sandbox if configured
+    if settings.sandbox.enabled and settings.sandbox.backend == "docker":
+        from openharness.sandbox.session import start_docker_sandbox
+
+        await start_docker_sandbox(settings, session_id, Path(cwd))
 
     return RuntimeBundle(
         api_client=resolved_api_client,
@@ -336,6 +353,16 @@ async def start_runtime(bundle: RuntimeBundle) -> None:
 
 async def close_runtime(bundle: RuntimeBundle) -> None:
     """Close runtime-owned resources."""
+    from openharness.sandbox.session import stop_docker_sandbox
+
+    await stop_docker_sandbox()
+    # Extract local environment rules from session before closing
+    try:
+        from openharness.personalization.session_hook import update_rules_from_session
+        update_rules_from_session(bundle.engine.messages)
+    except Exception:
+        pass  # personalization is best-effort, never block session end
+
     await bundle.mcp_manager.close()
     await bundle.hook_executor.execute(
         HookEvent.SESSION_END,
@@ -412,9 +439,8 @@ def sync_app_state(bundle: RuntimeBundle) -> None:
     if bundle.enforce_max_turns:
         bundle.engine.set_max_turns(settings.max_turns)
     provider = detect_provider(settings)
-    _, active_profile = settings.resolve_profile()
     bundle.app_state.set(
-        model=display_model_setting(active_profile),
+        model=settings.model,
         permission_mode=settings.permission.mode.value,
         theme=settings.theme,
         cwd=bundle.cwd,

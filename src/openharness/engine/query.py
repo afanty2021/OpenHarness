@@ -86,6 +86,8 @@ class QueryContext:
     model: str
     system_prompt: str
     max_tokens: int
+    context_window_tokens: int | None = None
+    auto_compact_threshold_tokens: int | None = None
     permission_prompt: PermissionPrompt | None = None
     ask_user_prompt: AskUserPrompt | None = None
     max_turns: int | None = 200
@@ -435,6 +437,8 @@ async def run_query(
                 trigger=trigger,
                 hook_executor=context.hook_executor,
                 carryover_metadata=context.tool_metadata,
+                context_window_tokens=context.context_window_tokens,
+                auto_compact_threshold_tokens=context.auto_compact_threshold_tokens,
             )
         )
         while True:
@@ -511,6 +515,16 @@ async def run_query(
             if messages and messages[-1].role == "user" and messages[-1].text.startswith("# Coordinator User Context"):
                 coordinator_context_message = messages.pop()
 
+        if final_message.role == "assistant" and final_message.is_effectively_empty():
+            log.warning("dropping empty assistant message from provider response")
+            yield ErrorEvent(
+                message=(
+                    "Model returned an empty assistant message. "
+                    "The turn was ignored to keep the session healthy."
+                )
+            ), usage
+            return
+
         messages.append(final_message)
         yield AssistantTurnComplete(message=final_message, usage=usage), usage
 
@@ -541,8 +555,28 @@ async def run_query(
             async def _run(tc):
                 return await _execute_tool_call(context, tc.name, tc.id, tc.input)
 
-            results = await asyncio.gather(*[_run(tc) for tc in tool_calls])
-            tool_results = list(results)
+            # Use return_exceptions=True so a single failing tool does not abandon
+            # its siblings as cancelled coroutines and leave the conversation with
+            # un-replied tool_use blocks (Anthropic's API rejects the next request
+            # on the session if any tool_use is missing a matching tool_result).
+            raw_results = await asyncio.gather(
+                *[_run(tc) for tc in tool_calls], return_exceptions=True
+            )
+            tool_results = []
+            for tc, result in zip(tool_calls, raw_results):
+                if isinstance(result, BaseException):
+                    log.exception(
+                        "tool execution raised: name=%s id=%s",
+                        tc.name,
+                        tc.id,
+                        exc_info=result,
+                    )
+                    result = ToolResultBlock(
+                        tool_use_id=tc.id,
+                        content=f"Tool {tc.name} failed: {type(result).__name__}: {result}",
+                        is_error=True,
+                    )
+                tool_results.append(result)
 
             for tc, result in zip(tool_calls, tool_results):
                 yield ToolExecutionCompleted(
@@ -598,7 +632,8 @@ async def _execute_tool_call(
         )
 
     # Normalize common tool inputs before permission checks so path rules apply
-    # consistently across built-in tools that use either `file_path` or `path`.
+    # consistently across built-in tools that use `file_path`, `path`, or
+    # directory-scoped roots such as `glob`/`grep`.
     _file_path = _resolve_permission_file_path(context.cwd, tool_input, parsed_input)
     _command = _extract_permission_command(tool_input, parsed_input)
     log.debug("permission check: %s read_only=%s path=%s cmd=%s",
@@ -617,7 +652,7 @@ async def _execute_tool_call(
                 log.debug("permission denied by user for %s", tool_name)
                 return ToolResultBlock(
                     tool_use_id=tool_use_id,
-                    content=f"Permission denied for {tool_name}",
+                    content=decision.reason or f"Permission denied for {tool_name}",
                     is_error=True,
                 )
         else:
@@ -676,7 +711,7 @@ def _resolve_permission_file_path(
     raw_input: dict[str, object],
     parsed_input: object,
 ) -> str | None:
-    for key in ("file_path", "path"):
+    for key in ("file_path", "path", "root"):
         value = raw_input.get(key)
         if isinstance(value, str) and value.strip():
             path = Path(value).expanduser()
@@ -684,7 +719,7 @@ def _resolve_permission_file_path(
                 path = cwd / path
             return str(path.resolve())
 
-    for attr in ("file_path", "path"):
+    for attr in ("file_path", "path", "root"):
         value = getattr(parsed_input, attr, None)
         if isinstance(value, str) and value.strip():
             path = Path(value).expanduser()

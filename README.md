@@ -190,18 +190,33 @@ OpenHarness is an open-source Python implementation designed for **researchers, 
 
 ### 1. Install
 
+#### Linux / macOS / WSL
+
 ```bash
-# One-click install (Linux / macOS / WSL)
+# One-click install
 curl -fsSL https://raw.githubusercontent.com/HKUDS/OpenHarness/main/scripts/install.sh | bash
 
 # Or via pip
 pip install openharness-ai
 ```
 
+#### Windows (Native)
+
+```powershell
+# One-click install (PowerShell)
+iex (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/HKUDS/OpenHarness/main/scripts/install.ps1')
+
+# Or via pip
+pip install openharness-ai
+```
+
+**Note**: Windows support is now native. In PowerShell, use `openh` instead of `oh` because `oh` can resolve to the built-in `Out-Host` alias.
+
 ### 2. Configure
 
 ```bash
 oh setup    # interactive wizard — pick a provider, authenticate, done
+# On Windows PowerShell, use: openh setup
 ```
 
 Supports **Claude / OpenAI / Copilot / Codex / Moonshot(Kimi) / GLM / MiniMax** and any compatible endpoint.
@@ -210,6 +225,7 @@ Supports **Claude / OpenAI / Copilot / Codex / Moonshot(Kimi) / GLM / MiniMax** 
 
 ```bash
 oh
+# On Windows PowerShell, use: openh
 ```
 
 <p align="center">
@@ -286,6 +302,7 @@ Any provider implementing the OpenAI `/v1/chat/completions` style API works:
 | **DeepSeek** | `https://api.deepseek.com` | `deepseek-chat`, `deepseek-reasoner` |
 | **GitHub Models** | `https://models.inference.ai.azure.com` | `gpt-4o`, `Meta-Llama-3.1-405B-Instruct` |
 | **SiliconFlow** | `https://api.siliconflow.cn/v1` | `deepseek-ai/DeepSeek-V3` |
+| **Google Gemini** | `https://generativelanguage.googleapis.com/v1beta/openai` | `gemini-2.5-flash`, `gemini-2.5-pro` |
 | **Groq** | `https://api.groq.com/openai/v1` | `llama-3.3-70b-versatile` |
 | **Ollama (local)** | `http://localhost:11434/v1` | any local model |
 
