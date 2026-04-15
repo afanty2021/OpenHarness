@@ -1,13 +1,42 @@
 # OpenHarness - AI Context Documentation
 
 > **初始化时间**: 2026-04-04 22:29:01
-> **最后更新**: 2026-04-04 23:03:56
-> **版本**: v0.1.0
-> **文档覆盖率**: 98% (深度扫描完成)
+> **最后更新**: 2026-04-15 14:23:59
+> **版本**: v0.3.0
+> **文档覆盖率**: 100% (全部模块已文档化)
 
 ---
 
 ## 变更记录 (Changelog)
+
+### 2026-04-15 14:23:59 - 新增模块文档完成
+- ✅ 创建 state 模块文档（AppState, AppStateStore）
+- ✅ 创建 keybindings 模块文档（默认绑定、加载器、解析器）
+- ✅ 创建 output_styles 模块文档（内置样式、加载器）
+- ✅ 创建 vim 模块文档（模式切换）
+- ✅ 创建 voice 模块文档（语音识别、关键词提取、能力检测）
+- ✅ 更新 Mermaid 结构图（添加 7 个新模块链接）
+- ✅ 更新模块索引状态（23/23 模块已文档化）
+- 📊 文档覆盖率：69.6% → 100%
+
+### 2026-04-15 - 上下文文档更新
+- 📊 更新项目统计数据（反映最新代码库状态）
+- 📝 更新最近提交记录（包含 #138、#135、#118、#125 等 PR 合并）
+- 🔧 更新工具/命令/技能数量统计
+- 📈 新增模块：api/, state/, keybindings/, output_styles/, services/, vim/, voice/
+- 🔄 模块总数：16 → 23 个
+
+**最近 10 次提交**：
+- `7d2a010` feat(tui): add codex output style to reduce streaming flicker
+- `0c84d85` fix(bash): surface clearer install workflow guidance
+- `ce84a6a` fix(session): sanitize empty assistant messages and add windows alias
+- `a2dea03` fix(engine): keep parallel tool turns alive when one tool raises (#138)
+- `f8e83c8` fix(tools): update todo items in place instead of duplicating (#135)
+- `e537ba9` chore(installer): add native Windows PowerShell installer (#118)
+- `ed0b5f0` fix(tui): write trailing newline on exit so shell prompt starts on a fresh line (#133)
+- `46a618b` test(ohmo): update interactive prompts for remote admin settings
+- `1ffc4a4` fix(memory): preserve slug fallback in secure path resolution
+- `45fb335` fix(feishu): reply in group threads instead of creating new topics (#125)
 
 ### 2026-04-04 23:03:56 - 深度扫描完成 (阶段 C)
 - ✅ 完成核心执行流程深度分析（query.py, stream_events.py）
@@ -56,17 +85,17 @@ OpenHarness 是一个开源的 AI Agent Harness（智能体约束框架），提
 
 ## 架构总览
 
-OpenHarness 采用模块化架构，核心分为 16 个主要子系统：
+OpenHarness 采用模块化架构，核心分为 23 个主要子系统：
 
 ```
 OpenHarness
 ├── engine/          # 智能体循环引擎
-├── tools/           # 工具注册表（43+ 工具）
+├── tools/           # 工具注册表（40+ 工具）
 ├── skills/          # 技能系统（按需加载）
 ├── plugins/         # 插件生态
 ├── permissions/     # 权限与安全
 ├── hooks/           # 生命周期钩子
-├── commands/        # 命令注册表（54+ 命令）
+├── commands/        # 命令注册表
 ├── mcp/             # MCP 客户端
 ├── memory/          # 持久化内存
 ├── tasks/           # 后台任务管理
@@ -75,7 +104,14 @@ OpenHarness
 ├── bridge/          # 桥接会话管理
 ├── prompts/         # 系统提示词与上下文
 ├── config/          # 多层配置系统
-└── ui/              # React TUI 前端
+├── ui/              # React TUI 前端
+├── api/             # API 客户端（Anthropic/Codex/Copilot）
+├── state/           # 应用状态管理
+├── keybindings/     # 键盘绑定系统
+├── output_styles/   # 输出样式系统
+├── services/        # 外部服务（LSP/OAuth）
+├── vim/             # Vim 模式支持
+└── voice/           # 语音模式支持
 ```
 
 ### 技术栈
@@ -125,6 +161,13 @@ graph TD
     A --> O["prompts"];
     A --> P["config"];
     A --> Q["ui"];
+    A --> R["api"];
+    A --> S["state"];
+    A --> T["keybindings"];
+    A --> U["output_styles"];
+    A --> V["services"];
+    A --> W["vim"];
+    A --> X["voice"];
 
     click B "./src/openharness/engine/CLAUDE.md" "查看 engine 模块文档"
     click C "./src/openharness/tools/CLAUDE.md" "查看 tools 模块文档"
@@ -142,6 +185,13 @@ graph TD
     click O "./src/openharness/prompts/CLAUDE.md" "查看 prompts 模块文档"
     click P "./src/openharness/config/CLAUDE.md" "查看 config 模块文档"
     click Q "./src/openharness/ui/CLAUDE.md" "查看 ui 模块文档"
+    click R "./src/openharness/api/CLAUDE.md" "查看 api 模块文档"
+    click S "./src/openharness/state/CLAUDE.md" "查看 state 模块文档"
+    click T "./src/openharness/keybindings/CLAUDE.md" "查看 keybindings 模块文档"
+    click U "./src/openharness/output_styles/CLAUDE.md" "查看 output_styles 模块文档"
+    click V "./src/openharness/services/CLAUDE.md" "查看 services 模块文档"
+    click W "./src/openharness/vim/CLAUDE.md" "查看 vim 模块文档"
+    click X "./src/openharness/voice/CLAUDE.md" "查看 voice 模块文档"
 ```
 
 ---
@@ -151,12 +201,12 @@ graph TD
 | 模块名称 | 路径 | 主要语言 | 核心职责 | 文档状态 |
 |---------|------|---------|---------|---------|
 | **engine** | `src/openharness/engine/` | Python | 智能体循环引擎、查询执行、流式处理 | ✅ 已深度扫描 |
-| **tools** | `src/openharness/tools/` | Python | 工具注册表、43+ 工具实现 | ✅ 已深度扫描 |
+| **tools** | `src/openharness/tools/` | Python | 工具注册表、40+ 工具实现 | ✅ 已深度扫描 |
 | **skills** | `src/openharness/skills/` | Python | 技能加载器、技能注册表 | ✅ 已深度扫描 |
 | **plugins** | `src/openharness/plugins/` | Python | 插件系统、安装器、加载器 | ✅ 已深度扫描 |
 | **permissions** | `src/openharness/permissions/` | Python | 权限检查器、权限模式 | ✅ 已深度扫描 |
 | **hooks** | `src/openharness/hooks/` | Python | 生命周期钩子、执行器 | ✅ 已深度扫描 |
-| **commands** | `src/openharness/commands/` | Python | 命令注册表、54+ 命令 | ✅ 已深度扫描 |
+| **commands** | `src/openharness/commands/` | Python | 命令注册表 | ✅ 已深度扫描 |
 | **mcp** | `src/openharness/mcp/` | Python | MCP 客户端、配置管理 | ✅ 已深度扫描 |
 | **memory** | `src/openharness/memory/` | Python | 持久化内存、CLAUDE.md 扫描 | ✅ 已深度扫描 |
 | **tasks** | `src/openharness/tasks/` | Python | 后台任务管理 | ✅ 已深度扫描 |
@@ -166,6 +216,13 @@ graph TD
 | **prompts** | `src/openharness/prompts/` | Python | 系统提示词、上下文注入 | ✅ 已深度扫描 |
 | **config** | `src/openharness/config/` | Python | 多层配置、设置管理 | ✅ 已深度扫描 |
 | **ui** | `src/openharness/ui/` | Python + TypeScript | React TUI 前端 | ✅ 已深度扫描 |
+| **api** | `src/openharness/api/` | Python | API 客户端（Anthropic/Codex/Copilot） | ✅ 已文档化 |
+| **state** | `src/openharness/state/` | Python | 应用状态管理 | ✅ 已文档化 |
+| **keybindings** | `src/openharness/keybindings/` | Python | 键盘绑定系统 | ✅ 已文档化 |
+| **output_styles** | `src/openharness/output_styles/` | Python | 输出样式系统 | ✅ 已文档化 |
+| **services** | `src/openharness/services/` | Python | 外部服务（LSP/OAuth/Token） | ✅ 已文档化 |
+| **vim** | `src/openharness/vim/` | Python | Vim 模式支持 | ✅ 已文档化 |
+| **voice** | `src/openharness/voice/` | Python | 语音模式支持 | ✅ 已文档化 |
 
 ---
 
@@ -226,8 +283,8 @@ OpenHarness 采用多层次测试策略：
 ### 贡献指南
 
 1. Fork 项目并创建特性分支
-2. 确保所有测试通过: `uv run pytest -q`
-3. 运行代码检查: `uv run ruff check src/`
+2. 确保所有测试通过：`uv run pytest -q`
+3. 运行代码检查：`uv run ruff check src/`
 4. 提交清晰的提交信息
 5. 创建 Pull Request
 
@@ -261,7 +318,7 @@ type(scope): description
 [optional footer]
 ```
 
-类型: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
+类型：`feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`
 
 示例:
 ```
@@ -403,18 +460,28 @@ OpenHarness 设计为与以下生态系统兼容：
 
 ### 代码统计
 
-- **Python 文件**: 90+
-- **TypeScript 文件**: 17
-- **测试文件**: 60+
-- **工具数量**: 43+
-- **命令数量**: 54+
-- **技能数量**: 7+ 内置
+- **Python 文件**: 207+
+- **TypeScript/TSX 文件**: 23+
+- **测试文件**: 99+
+- **工具数量**: 40+ (实际工具实现)
+- **命令数量**: 待更新
+- **技能数量**: 3+ (registry, types, init)
+- **总文件数**: 396+
+
+**模块统计**：
+- `api/`: 10 文件 (client.py, codex_client.py, copilot_client.py, errors.py, usage.py, provider.py, registry.py, copilot_auth.py, openai_client.py)
+- `state/`: 3 文件 (app_state.py, store.py)
+- `keybindings/`: 5 文件 (default_bindings.py, loader.py, parser.py, resolver.py)
+- `output_styles/`: 2 文件 (loader.py)
+- `services/`: 9+ 文件 (lsp/, oauth/, compact/, token_estimation.py, cron_scheduler.py, session_backend.py, session_storage.py, cron.py)
+- `vim/`: 2 文件 (transitions.py)
+- `voice/`: 4 文件 (voice_mode.py, stream_stt.py, keyterms.py)
 
 ### 覆盖率分析
 
-**已扫描模块**: 16/16 (100%)
+**已扫描模块**: 23/23 (100%)
 - engine: ✅ 完整（包含 query.py 深度分析）
-- tools: ✅ 完整（包含 43+ 工具实现细节）
+- tools: ✅ 完整（包含 40+ 工具实现细节）
 - skills: ✅ 完整
 - plugins: ✅ 完整
 - permissions: ✅ 完整
@@ -429,8 +496,15 @@ OpenHarness 设计为与以下生态系统兼容：
 - prompts: ✅ 完整
 - config: ✅ 完整
 - ui: ✅ 完整（包含 React TUI 组件分析）
+- api: ✅ 已文档化（client.py, codex_client.py, copilot_client.py, openai_client.py）
+- state: ✅ 已文档化（app_state.py, store.py）
+- keybindings: ✅ 已文档化（default_bindings.py, loader.py, parser.py, resolver.py）
+- output_styles: ✅ 已文档化（loader.py）
+- services: ✅ 已文档化（lsp/, oauth/, compact/, token_estimation.py）
+- vim: ✅ 已文档化（transitions.py）
+- voice: ✅ 已文档化（voice_mode.py, stream_stt.py, keyterms.py）
 
-**文档覆盖率**: 98% (深度扫描完成)
+**文档覆盖率**: 100% (23/23 模块已文档化)
 
 ### 测试统计
 
@@ -460,9 +534,9 @@ OpenHarness 设计为与以下生态系统兼容：
 
 **工具分类**:
 - 文件 I/O: Read, Write, Edit, Glob, Grep, Bash
-- 搜索: WebFetch, WebSearch, ToolSearch, LSP
-- 智能体: Agent, SendMessage, TeamCreate/Delete
-- 任务: TaskCreate/Get/List/Update/Stop/Output
+- 搜索：WebFetch, WebSearch, ToolSearch, LSP
+- 智能体：Agent, SendMessage, TeamCreate/Delete
+- 任务：TaskCreate/Get/List/Update/Stop/Output
 - MCP: MCPTool, ListMcpResources, ReadMcpResource
 - 其他 21+ 工具
 
@@ -503,6 +577,35 @@ OpenHarness 设计为与以下生态系统兼容：
 - 模态框状态管理
 - 键盘输入处理
 
+### 新增模块发现
+
+**API 模块**:
+- AnthropicApiClient: 带重试逻辑的 Anthropic API 客户端
+- OpenAICompatibleClient: OpenAI 格式 API 客户端
+- CodexApiClient: Codex 专用客户端
+- CopilotClient: GitHub Copilot 客户端
+- ProviderInfo: 提供商检测和认证状态
+
+**State 模块**:
+- AppState: 应用状态数据类（28 个字段）
+- AppStateStore: 可观察状态存储（订阅者模式）
+
+**Keybindings 模块**:
+- DEFAULT_KEYBINDINGS: 默认快捷键映射
+- 加载器/解析器/冲突解决器
+
+**Output Styles 模块**:
+- 3 种内置样式：default, minimal, codex
+- 支持用户自定义样式
+
+**Voice 模块**:
+- VoiceDiagnostics: 语音能力诊断
+- transcribe_stream: 流式语音识别
+- extract_keyterms: 关键词提取
+
+**Vim 模块**:
+- toggle_vim_mode: Vim 模式切换
+
 ### 测试与质量
 
 **E2E 测试覆盖**:
@@ -531,11 +634,12 @@ OpenHarness 是一个设计精良的 AI 智能体框架，具有以下优势：
 📊 **可观测性**: 完整的日志、调试和监控机制
 🤖 **多智能体**: 完整的协调和群管理系统
 🧠 **智能内存**: 自动上下文压缩和持久化内存
+⌨️ **交互丰富**: 键盘绑定、Vim 模式、语音模式、输出样式
 
-本项目文档系统已完成深度扫描，为 AI 辅助开发提供了全面的上下文支持。
+本项目文档系统已完成 100% 覆盖，为 AI 辅助开发提供了全面的上下文支持。
 
 ---
 
-*文档生成时间: 2026-04-04 23:03:56*
-*初始化工具: PAI Algorithm v3.7.0*
-*深度扫描完成: 阶段 C*
+*文档生成时间：2026-04-15 14:23:59*
+*初始化工具：PAI Algorithm v3.7.0*
+*本次更新：v0.3.0 - 新增模块文档完成*
